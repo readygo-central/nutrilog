@@ -121,20 +121,27 @@ function pct(v,max){return Math.min(100,max>0?(v/max)*100:0);}
 function microColor(p){if(p<50)return"#EF4444";if(p<80)return"#F59E0B";return"#22C55E";}
 function gradeColor(g){return{A:"#22C55E",B:"#86EFAC",C:"#FBBF24",D:"#F97316",F:"#EF4444"}[g]||MUTED;}
 
-// ── API (Google Gemini) ───────────────────────────────────────
-async function callGemini(userMsg,sysMsg,apiKey){
-  const url=`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
-  const res=await fetch(url,{
+// ── API (Groq) ────────────────────────────────────────────────
+async function callGroq(userMsg,sysMsg,apiKey){
+  const res=await fetch("https://api.groq.com/openai/v1/chat/completions",{
     method:"POST",
-    headers:{"Content-Type":"application/json"},
+    headers:{
+      "Content-Type":"application/json",
+      "Authorization":`Bearer ${apiKey}`
+    },
     body:JSON.stringify({
-      contents:[{parts:[{text:sysMsg+"\n\n"+userMsg}]}],
-      generationConfig:{temperature:0.1,maxOutputTokens:1000}
+      model:"llama-3.3-70b-versatile",
+      messages:[
+        {role:"system",content:sysMsg},
+        {role:"user",content:userMsg}
+      ],
+      temperature:0.1,
+      max_tokens:1000
     })
   });
   if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||`HTTP ${res.status}`);}
   const data=await res.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text||"";
+  return data.choices?.[0]?.message?.content||"";
 }
 
 // ── UI Components ────────────────────────────────────────────
@@ -184,17 +191,17 @@ function SetupScreen({onSave}){
       <div style={{fontSize:48,marginBottom:16}}>🥑</div>
       <div style={{fontFamily:"Outfit,sans-serif",fontWeight:800,fontSize:30,color:ACCENT,marginBottom:8}}>NutriLog</div>
       <div style={{color:MUTED,fontSize:14,textAlign:"center",marginBottom:32,lineHeight:1.6}}>
-        Enter your free Google Gemini API key to enable AI nutrition estimation.<br/>Your key is stored only on this device.
+        Enter your free Groq API key to enable AI nutrition estimation.<br/>Your key is stored only on this device.
       </div>
 
       <div style={{width:"100%",maxWidth:380}}>
-        <label style={{fontSize:13,color:MUTED,marginBottom:6,display:"block"}}>Google Gemini API Key (free)</label>
+        <label style={{fontSize:13,color:MUTED,marginBottom:6,display:"block"}}>Groq API Key (free)</label>
         <div style={{position:"relative",marginBottom:8}}>
           <input
             type={show?"text":"password"}
             value={key}
             onChange={e=>setKey(e.target.value)}
-            placeholder="AIza..."
+            placeholder="gsk_..."
             style={{width:"100%",background:CARD,border:`1px solid ${BORDER}`,borderRadius:12,
               padding:"14px 48px 14px 16px",color:TEXT,fontSize:15}}
           />
@@ -208,15 +215,15 @@ function SetupScreen({onSave}){
         <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:12,padding:"14px 16px",marginBottom:20}}>
           <div style={{fontSize:12,color:TEXT,fontWeight:600,marginBottom:6}}>How to get your free key:</div>
           <div style={{fontSize:12,color:MUTED,lineHeight:1.7}}>
-            1. Go to <span style={{color:ACCENT}}>aistudio.google.com</span><br/>
-            2. Sign in with your Google account<br/>
-            3. Click <span style={{color:TEXT}}>"Get API key"</span> → <span style={{color:TEXT}}>"Create API key"</span><br/>
+            1. Go to <span style={{color:ACCENT}}>console.groq.com</span><br/>
+            2. Sign in with your account<br/>
+            3. Click <span style={{color:TEXT}}>"API Keys"</span> → <span style={{color:TEXT}}>"Create API Key"</span><br/>
             4. Copy and paste it above
           </div>
         </div>
 
         <button
-          onClick={()=>{if(key.startsWith("AIza")||key.length>20){onSave(key.trim());}else{alert("Paste a valid Google Gemini API key (starts with AIza).");}}}
+          onClick={()=>{if(key.startsWith('gsk_')||key.length>20){onSave(key.trim());}else{alert('Paste a valid Groq API key (starts with gsk_).');}}}
           style={{width:"100%",background:ACCENT,border:"none",color:"#fff",borderRadius:14,
             padding:"16px",fontFamily:"Outfit,sans-serif",fontWeight:700,fontSize:17}}>
           Get Started →
@@ -323,7 +330,7 @@ function App(){
     if(!input.trim())return;
     setLoading(true);setApiError("");
     try{
-      const raw=await callGemini(
+      const raw=await callGroq(
         `Estimate nutrition for: "${input}"\nReturn ONLY valid JSON:\n{"calories":0,"protein":0,"fat":0,"netCarbs":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"magnesium":0,"calcium":0,"vitaminD":0,"vitaminC":0,"iron":0,"concerns":[]}`,
         "You are a precise nutrition estimator. Return ONLY valid JSON, no markdown, no explanation.",
         apiKey
@@ -349,7 +356,7 @@ function App(){
       const totals={};
       [...MACROS,...MICROS].forEach(f=>totals[f.key]=sum(meals,f.key));
       totals.calories=sum(meals,"calories");
-      const raw=await callGemini(
+      const raw=await callGroq(
         `Today's totals:${JSON.stringify(totals)}\nTargets:${JSON.stringify(targets)}\nMeals:${meals.map(m=>m.description).join(", ")}\n\nReturn ONLY valid JSON:\n{"grade":"A|B|C|D|F","comment":"one blunt sentence","deficiencies":[],"overages":[],"suggestion":"one specific action for tomorrow"}`,
         "You are a brutally honest nutrition coach. Return ONLY valid JSON.",
         apiKey
@@ -475,7 +482,7 @@ function App(){
     let narrative="";
     try{
       const avgStr=Object.entries(wd.avg).map(([k,v])=>k+":"+v).join(", ");
-      narrative=await callGemini(
+      narrative=await callGroq(
         `Weekly nutrition data (${wd.nLogged} days logged).\nDaily averages: ${avgStr}\nTargets: ${JSON.stringify(wd.targets)}\n\nWrite a 3-4 sentence brutally honest weekly nutrition coach summary. Cover: overall grade for the week, biggest wins, biggest gaps, and one specific priority for next week. Plain text only, no bullet points.`,
         "You are a direct, no-nonsense nutrition coach writing a weekly email summary. Be specific, use numbers, skip pleasantries.",
         apiKey
@@ -789,7 +796,7 @@ function App(){
                 <div style={{background:"#2D0A0A",border:"1px solid #EF444440",borderRadius:10,
                   padding:"10px 14px",marginBottom:12,fontSize:12,color:"#F87171",lineHeight:1.5}}>
                   ⚠️ API error: {apiError}<br/>
-                  <span style={{color:MUTED}}>Check your Gemini API key in ⚙️ Settings.</span>
+                  <span style={{color:MUTED}}>Check your Groq API key in ⚙️ Settings.</span>
                 </div>
               )}
               <button onClick={estimateMeal} disabled={loading||!input.trim()}
@@ -877,15 +884,15 @@ function App(){
         <Sheet title="⚙️ Settings" onClose={()=>setShowSettings(false)}>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
             <div>
-              <label style={{fontSize:13,color:MUTED,marginBottom:6,display:"block"}}>Google Gemini API Key</label>
+              <label style={{fontSize:13,color:MUTED,marginBottom:6,display:"block"}}>Groq API Key</label>
               <input type="password" defaultValue={apiKey}
                 onBlur={e=>{LS.set("nl_apikey",e.target.value);setApiKey(e.target.value);}}
                 style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,
                   borderRadius:10,padding:"12px 14px",color:TEXT,fontSize:14}}
-                placeholder="AIza..."
+                placeholder="gsk_..."
               />
               <div style={{fontSize:11,color:MUTED,marginTop:8,lineHeight:1.6}}>
-                Free key from <span style={{color:ACCENT}}>aistudio.google.com</span> → Get API key → Create API key
+                Free key from <span style={{color:ACCENT}}>console.groq.com</span> → API Keys → Create API Key
               </div>
             </div>
             <div style={{background:"#071A0F",border:"1px solid #22C55E25",borderRadius:12,padding:"12px 14px"}}>
