@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="NutriLog"/>
+  <meta name="theme-color" content="#080C18"/>
+  <title>NutriLog</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    html,body,#root{height:100%;background:#080C18;}
+    body{-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;}
+    ::-webkit-scrollbar{width:3px;}
+    ::-webkit-scrollbar-thumb{background:#1E2A45;border-radius:2px;}
+    textarea,input{outline:none;font-family:inherit;-webkit-appearance:none;border-radius:0;}
+    button{cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;}
+    /* Safe area insets for iPhone notch/home bar */
+    .safe-top{padding-top:env(safe-area-inset-top);}
+    .safe-bottom{padding-bottom:calc(env(safe-area-inset-bottom) + 90px);}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useRef}=React;
+
+// ── Constants ────────────────────────────────────────────────
+const ACCENT="#FF6B35",BG="#080C18",CARD="#0F1629",BORDER="#1A2340",TEXT="#E8EAF0",MUTED="#6B7A99";
+
+const SUPPLEMENTS=[
+  {id:"multi",name:"TJ's High Potency Multi",icon:"💊",note:"Trader Joe's High Potency Chewable",
+   calories:5,protein:0,fat:0,netCarbs:1,fiber:0,sugar:0,
+   sodium:0,potassium:80,magnesium:50,calcium:200,vitaminD:15,vitaminC:250,iron:18},
+  {id:"collagen",name:"Vital Proteins Collagen",icon:"🧴",note:"20g serving — not a complete protein",
+   calories:70,protein:18,fat:0,netCarbs:0,fiber:0,sugar:0,
+   sodium:80,potassium:0,magnesium:0,calcium:0,vitaminD:0,vitaminC:0,iron:0},
+];
+
+const DEFAULT_TARGETS={
+  calories:2200,protein:175,fat:145,netCarbs:50,fiber:32,sugar:20,
+  sodium:2300,potassium:4700,magnesium:420,calcium:1000,
+  vitaminD:15,vitaminC:90,iron:18
+};
+
+const MACROS=[
+  {key:"protein",label:"Protein",unit:"g",color:"#60A5FA"},
+  {key:"fat",label:"Fat",unit:"g",color:"#FBBF24"},
+  {key:"netCarbs",label:"Net Carbs",unit:"g",color:"#A78BFA"},
+  {key:"fiber",label:"Fiber",unit:"g",color:"#34D399"},
+  {key:"sugar",label:"Sugar",unit:"g",color:"#F87171"},
+];
+
+const MICROS=[
+  {key:"sodium",label:"Sodium",unit:"mg"},
+  {key:"potassium",label:"Potassium",unit:"mg"},
+  {key:"magnesium",label:"Magnesium",unit:"mg"},
+  {key:"calcium",label:"Calcium",unit:"mg"},
+  {key:"vitaminD",label:"Vitamin D",unit:"mcg"},
+  {key:"vitaminC",label:"Vitamin C",unit:"mg"},
+  {key:"iron",label:"Iron",unit:"mg"},
+];
+
+const TARGET_FIELDS=[
+  {key:"calories",label:"Calories",unit:"kcal"},
+  {key:"protein",label:"Protein",unit:"g"},
+  {key:"fat",label:"Fat",unit:"g"},
+  {key:"netCarbs",label:"Net Carbs",unit:"g"},
+  {key:"fiber",label:"Fiber",unit:"g"},
+  {key:"sugar",label:"Sugar",unit:"g"},
+  {key:"sodium",label:"Sodium",unit:"mg"},
+  {key:"potassium",label:"Potassium",unit:"mg"},
+  {key:"magnesium",label:"Magnesium",unit:"mg"},
+  {key:"calcium",label:"Calcium",unit:"mg"},
+  {key:"vitaminD",label:"Vitamin D",unit:"mcg"},
+  {key:"vitaminC",label:"Vitamin C",unit:"mg"},
+  {key:"iron",label:"Iron",unit:"mg"},
+];
+
+const MIN_DATE="2026-04-12";
+
+// ── Storage (localStorage) ───────────────────────────────────
+const LS={
+  get(k){try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}},
+  set(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch{}},
+  del(k){try{localStorage.removeItem(k);}catch{}},
+};
+
+// ── Timezone helpers ─────────────────────────────────────────
+// Auto-detects browser timezone; falls back to America/New_York (Eastern)
+function getUserTZ(){
+  try{return Intl.DateTimeFormat().resolvedOptions().timeZone||"America/New_York";}
+  catch{return"America/New_York";}
+}
+const USER_TZ=getUserTZ();
+
+// ── Helpers ──────────────────────────────────────────────────
+// Returns YYYY-MM-DD in the user's local timezone (not UTC)
+function todayStr(){
+  return new Date().toLocaleDateString("en-CA",{timeZone:USER_TZ});
+}
+function addDays(s,n){const d=new Date(s+"T12:00:00");d.setDate(d.getDate()+n);return d.toLocaleDateString("en-CA",{timeZone:USER_TZ});}
+function fmtDate(s){
+  const t=todayStr();
+  if(s===t)return"Today";
+  if(s===addDays(t,-1))return"Yesterday";
+  return new Date(s+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",timeZone:USER_TZ});
+}
+function fmtTime(){return new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:USER_TZ});}
+function sum(meals,k){return meals.reduce((a,m)=>a+(Number(m[k])||0),0);}
+function pct(v,max){return Math.min(100,max>0?(v/max)*100:0);}
+function microColor(p){if(p<50)return"#EF4444";if(p<80)return"#F59E0B";return"#22C55E";}
+function gradeColor(g){return{A:"#22C55E",B:"#86EFAC",C:"#FBBF24",D:"#F97316",F:"#EF4444"}[g]||MUTED;}
+
+// ── API (Google Gemini) ───────────────────────────────────────
+async function callGemini(userMsg,sysMsg,apiKey){
+  const url=`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  const res=await fetch(url,{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      contents:[{parts:[{text:sysMsg+"\n\n"+userMsg}]}],
+      generationConfig:{temperature:0.1,maxOutputTokens:1000}
+    })
+  });
+  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||`HTTP ${res.status}`);}
+  const data=await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text||"";
+}
+
+// ── UI Components ────────────────────────────────────────────
+function Bar({value,max,color=ACCENT,h=6}){
+  const w=pct(value,max);
+  return(
+    <div style={{background:"#1A2340",borderRadius:999,height:h,overflow:"hidden"}}>
+      <div style={{width:`${w}%`,height:"100%",background:color,borderRadius:999,transition:"width .4s"}}/>
+    </div>
+  );
+}
+
+function Backdrop({onClose}){
+  return <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:40,backdropFilter:"blur(4px)"}}/>;
+}
+
+function Sheet({title,onClose,children}){
+  return(
+    <>
+      <Backdrop onClose={onClose}/>
+      <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:50,background:"#0D1428",
+        borderTop:`1px solid ${BORDER}`,borderRadius:"20px 20px 0 0",
+        maxHeight:"92vh",overflowY:"auto",
+        paddingBottom:"env(safe-area-inset-bottom)",
+        boxShadow:"0 -8px 40px rgba(0,0,0,.6)"}}>
+        <div style={{display:"flex",justifyContent:"center",padding:"12px 0 6px"}}>
+          <div style={{width:40,height:4,background:BORDER,borderRadius:999}}/>
+        </div>
+        {title&&(
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"4px 20px 14px"}}>
+            <span style={{fontFamily:"Outfit,sans-serif",fontSize:18,fontWeight:600,color:TEXT}}>{title}</span>
+            <button onClick={onClose} style={{background:"none",border:"none",color:MUTED,fontSize:22,cursor:"pointer",lineHeight:1,padding:"4px 8px"}}>✕</button>
+          </div>
+        )}
+        <div style={{padding:"0 20px 32px"}}>{children}</div>
+      </div>
+    </>
+  );
+}
+
+// ── Setup Screen ─────────────────────────────────────────────
+function SetupScreen({onSave}){
+  const [key,setKey]=useState("");
+  const [show,setShow]=useState(false);
+  return(
+    <div style={{minHeight:"100vh",background:BG,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"32px 24px",fontFamily:"DM Sans,sans-serif"}}>
+      <div style={{fontSize:48,marginBottom:16}}>🥑</div>
+      <div style={{fontFamily:"Outfit,sans-serif",fontWeight:800,fontSize:30,color:ACCENT,marginBottom:8}}>NutriLog</div>
+      <div style={{color:MUTED,fontSize:14,textAlign:"center",marginBottom:32,lineHeight:1.6}}>
+        Enter your free Google Gemini API key to enable AI nutrition estimation.<br/>Your key is stored only on this device.
+      </div>
+
+      <div style={{width:"100%",maxWidth:380}}>
+        <label style={{fontSize:13,color:MUTED,marginBottom:6,display:"block"}}>Google Gemini API Key (free)</label>
+        <div style={{position:"relative",marginBottom:8}}>
+          <input
+            type={show?"text":"password"}
+            value={key}
+            onChange={e=>setKey(e.target.value)}
+            placeholder="AIza..."
+            style={{width:"100%",background:CARD,border:`1px solid ${BORDER}`,borderRadius:12,
+              padding:"14px 48px 14px 16px",color:TEXT,fontSize:15}}
+          />
+          <button onClick={()=>setShow(s=>!s)}
+            style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",
+              background:"none",border:"none",color:MUTED,fontSize:18,padding:4}}>
+            {show?"🙈":"👁️"}
+          </button>
+        </div>
+
+        <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:12,padding:"14px 16px",marginBottom:20}}>
+          <div style={{fontSize:12,color:TEXT,fontWeight:600,marginBottom:6}}>How to get your free key:</div>
+          <div style={{fontSize:12,color:MUTED,lineHeight:1.7}}>
+            1. Go to <span style={{color:ACCENT}}>aistudio.google.com</span><br/>
+            2. Sign in with your Google account<br/>
+            3. Click <span style={{color:TEXT}}>"Get API key"</span> → <span style={{color:TEXT}}>"Create API key"</span><br/>
+            4. Copy and paste it above
+          </div>
+        </div>
+
+        <button
+          onClick={()=>{if(key.startsWith("AIza")||key.length>20){onSave(key.trim());}else{alert("Paste a valid Google Gemini API key (starts with AIza).");}}}
+          style={{width:"100%",background:ACCENT,border:"none",color:"#fff",borderRadius:14,
+            padding:"16px",fontFamily:"Outfit,sans-serif",fontWeight:700,fontSize:17}}>
+          Get Started →
+        </button>
+
+        <div style={{fontSize:11,color:MUTED,textAlign:"center",marginTop:16,lineHeight:1.6}}>
+          Free tier: 1,500 meal estimates/day — more than enough.<br/>
+          Your key never leaves your device.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ─────────────────────────────────────────────────
+function App(){
+  const [apiKey,setApiKey]=useState(()=>LS.get("nl_apikey")||"");
+  const [date,setDate]=useState(todayStr());
+  const [meals,setMeals]=useState([]);
+  const [targets,setTargets]=useState(()=>LS.get("nl_targets")||DEFAULT_TARGETS);
+  const [editT,setEditT]=useState(DEFAULT_TARGETS);
+  const [suppOn,setSuppOn]=useState(()=>LS.get("nl_suppOn")||{multi:true,collagen:true});
+  const [showAdd,setShowAdd]=useState(false);
+  const [showTargets,setShowTargets]=useState(false);
+  const [showSettings,setShowSettings]=useState(false);
+  const [showEOD,setShowEOD]=useState(false);
+  const [input,setInput]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [preview,setPreview]=useState(null);
+  const [eodReport,setEodReport]=useState(null);
+  const [eodLoading,setEodLoading]=useState(false);
+  const [expanded,setExpanded]=useState(null);
+  const [vitOpen,setVitOpen]=useState(false);
+  const [apiError,setApiError]=useState("");
+  const [showWeekly,setShowWeekly]=useState(false);
+  const [weeklyLoading,setWeeklyLoading]=useState(false);
+  const [weeklyData,setWeeklyData]=useState(null);
+
+  // ── One-time migration: fix date shift caused by original relative-date seed bug ──
+  // Old seed put Sunday meals on 4/13 and Monday meals on 4/14. Move them to correct dates.
+  useEffect(()=>{
+    if(!LS.get("nl_migrated_v2")){
+      const badApr13=LS.get("nl_meals_2026-04-13"); // actually Sunday meals
+      const badApr14=LS.get("nl_meals_2026-04-14"); // actually Monday meals
+      if(badApr13){
+        LS.set("nl_meals_2026-04-12",badApr13);
+        LS.set("nl_seeded_2026-04-12",true);
+      }
+      if(badApr14){
+        LS.set("nl_meals_2026-04-13",badApr14);
+        LS.set("nl_seeded_2026-04-13",true);
+      }
+      LS.del("nl_meals_2026-04-14"); // wipe today — fresh slate
+      LS.set("nl_migrated_v2",true);
+    }
+
+    // ── Seed historical meals (fixed dates, only if not already present) ──
+    if(!LS.get("nl_seeded_2026-04-12")){
+      LS.set("nl_meals_2026-04-12",[
+        {id:1744214400001,time:"11:00",
+         description:"3 eggs scrambled in butter with sautéed spinach, onion, and feta cheese",
+         calories:402,protein:23,fat:32.5,netCarbs:4.4,fiber:0.9,sugar:0.5,
+         sodium:350,potassium:200,magnesium:20,calcium:150,vitaminD:1.5,vitaminC:10,iron:2,concerns:[]},
+        {id:1744214400002,time:"13:00",
+         description:"Homemade tuna salad on mixed greens with Wishbone balsamic vinaigrette and ¾ cup walnuts",
+         calories:776,protein:27.4,fat:70,netCarbs:10.7,fiber:6.8,sugar:3.7,
+         sodium:600,potassium:700,magnesium:120,calcium:80,vitaminD:0.3,vitaminC:20,iron:3,concerns:[]},
+        {id:1744214400003,time:"19:00",
+         description:"Half grilled chicken breast, steamed cauliflower, side salad with Wishbone balsamic vinaigrette",
+         calories:280,protein:38,fat:9.3,netCarbs:8,fiber:3.5,sugar:4.5,
+         sodium:540,potassium:650,magnesium:45,calcium:75,vitaminD:0.2,vitaminC:43,iron:2.3,concerns:[]},
+      ]);
+      LS.set("nl_seeded_2026-04-12",true);
+    }
+    if(!LS.get("nl_seeded_2026-04-13")){
+      LS.set("nl_meals_2026-04-13",[
+        {id:1744300800001,time:"11:00",
+         description:"4 eggs in light olive oil with homemade tuna salad, spinach, onion, broccoli, 3 turkey bacon, sprinkle of cheese",
+         calories:516,protein:42,fat:36,netCarbs:5,fiber:1.7,sugar:1.5,
+         sodium:1100,potassium:660,magnesium:35,calcium:200,vitaminD:2,vitaminC:23,iron:3,concerns:[]},
+        {id:1744300800002,time:"19:00",
+         description:"Stuffed baked zucchini with ground chicken, Ro-Tel, onion, mozzarella, side of roasted Brussels sprouts",
+         calories:338,protein:31,fat:15.5,netCarbs:12.5,fiber:5.7,sugar:6.3,
+         sodium:420,potassium:850,magnesium:40,calcium:130,vitaminD:0,vitaminC:85,iron:2.5,concerns:[]},
+        {id:1744300800003,time:"21:00",
+         description:"White Claw Surge hard seltzer (16oz, 8% ABV)",
+         calories:220,protein:0,fat:0,netCarbs:4,fiber:0,sugar:4,
+         sodium:0,potassium:0,magnesium:0,calcium:0,vitaminD:0,vitaminC:0,iron:0,concerns:["alcohol","sugar"]},
+      ]);
+      LS.set("nl_seeded_2026-04-13",true);
+    }
+    // 2026-04-14 (today) — blank slate, user logs fresh
+  },[]);
+
+  // Load meals when date changes
+  useEffect(()=>{
+    setExpanded(null);
+    setMeals(LS.get("nl_meals_"+date)||[]);
+  },[date]);
+
+  function saveMeals(m){setMeals(m);LS.set("nl_meals_"+date,m);}
+
+  async function estimateMeal(){
+    if(!input.trim())return;
+    setLoading(true);setApiError("");
+    try{
+      const raw=await callGemini(
+        `Estimate nutrition for: "${input}"\nReturn ONLY valid JSON:\n{"calories":0,"protein":0,"fat":0,"netCarbs":0,"fiber":0,"sugar":0,"sodium":0,"potassium":0,"magnesium":0,"calcium":0,"vitaminD":0,"vitaminC":0,"iron":0,"concerns":[]}`,
+        "You are a precise nutrition estimator. Return ONLY valid JSON, no markdown, no explanation.",
+        apiKey
+      );
+      setPreview(JSON.parse(raw.replace(/```json|```/g,"").trim()));
+    }catch(e){
+      setApiError(e.message||"Unknown error");
+    }
+    setLoading(false);
+  }
+
+  function confirmMeal(){
+    const m={id:Date.now(),time:fmtTime(),description:input,...preview};
+    saveMeals([...meals,m]);
+    setShowAdd(false);setInput("");setPreview(null);
+  }
+
+  function deleteMeal(id){saveMeals(meals.filter(m=>m.id!==id));}
+
+  async function endOfDay(){
+    setEodLoading(true);setShowEOD(true);setEodReport(null);setApiError("");
+    try{
+      const totals={};
+      [...MACROS,...MICROS].forEach(f=>totals[f.key]=sum(meals,f.key));
+      totals.calories=sum(meals,"calories");
+      const raw=await callGemini(
+        `Today's totals:${JSON.stringify(totals)}\nTargets:${JSON.stringify(targets)}\nMeals:${meals.map(m=>m.description).join(", ")}\n\nReturn ONLY valid JSON:\n{"grade":"A|B|C|D|F","comment":"one blunt sentence","deficiencies":[],"overages":[],"suggestion":"one specific action for tomorrow"}`,
+        "You are a brutally honest nutrition coach. Return ONLY valid JSON.",
+        apiKey
+      );
+      setEodReport(JSON.parse(raw.replace(/```json|```/g,"").trim()));
+    }catch(e){
+      setEodReport({grade:"?",comment:"Could not generate report: "+e.message,deficiencies:[],overages:[],suggestion:""});
+    }
+    setEodLoading(false);
+  }
+
+  function toggleSupp(id){
+    const next={...suppOn,[id]:!suppOn[id]};
+    setSuppOn(next);LS.set("nl_suppOn",next);
+  }
+
+  // ── Weekly Report ─────────────────────────────────────────
+  function getWeekDates(){
+    // Returns Sun–Sat dates for the current week in the user's timezone
+    const todayTZ=todayStr(); // YYYY-MM-DD in user's TZ
+    const d=new Date(todayTZ+"T12:00:00");
+    const day=d.getDay(); // 0=Sun
+    d.setDate(d.getDate()-day);
+    return Array.from({length:7},(_,i)=>{
+      const dt=new Date(d);
+      dt.setDate(d.getDate()+i);
+      return dt.toLocaleDateString("en-CA",{timeZone:USER_TZ});
+    });
+  }
+
+  function buildWeekData(){
+    const days=getWeekDates();
+    const suppBase=SUPPLEMENTS.reduce((acc,s)=>{
+      if(!suppOn[s.id])return acc;
+      Object.keys(acc).forEach(k=>{acc[k]=(acc[k]||0)+(s[k]||0);});
+      return acc;
+    },{calories:0,protein:0,fat:0,netCarbs:0,fiber:0,sugar:0,sodium:0,potassium:0,magnesium:0,calcium:0,vitaminD:0,vitaminC:0,iron:0});
+
+    const keys=["calories","protein","fat","netCarbs","fiber","sugar","sodium","potassium","magnesium","calcium","vitaminD","vitaminC","iron"];
+    const weekRows=days.map(d=>{
+      const dayMeals=LS.get("nl_meals_"+d)||[];
+      const hasMeals=dayMeals.length>0;
+      const row={date:d,mealCount:dayMeals.length,logged:hasMeals};
+      keys.forEach(k=>{
+        const fromMeals=dayMeals.reduce((a,m)=>a+(Number(m[k])||0),0);
+        row[k]=hasMeals?fromMeals+suppBase[k]:0;
+      });
+      return row;
+    });
+
+    const loggedDays=weekRows.filter(r=>r.logged);
+    const nLogged=loggedDays.length||1;
+    const weekTotals={};
+    keys.forEach(k=>weekTotals[k]=weekRows.reduce((a,r)=>a+r[k],0));
+    const weekAvg={};
+    keys.forEach(k=>weekAvg[k]=Math.round(weekTotals[k]/nLogged));
+
+    return{days:weekRows,totals:weekTotals,avg:weekAvg,nLogged,targets};
+  }
+
+  function fmtNum(n){return Math.round(n).toLocaleString();}
+  function pctStr(v,t){return t>0?Math.round((v/t)*100)+"%":"—";}
+
+  function buildEmailBody(wd,narrative){
+    const{days,avg,totals,nLogged,targets:tgt}=wd;
+    const wk=getWeekDates();
+    const weekLabel=new Date(wk[0]+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})+" – "+
+                    new Date(wk[6]+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+
+    const lines=[];
+    lines.push("NutriLog — Weekly Report");
+    lines.push(weekLabel);
+    lines.push("Days tracked: "+nLogged+"/7");
+    lines.push("");
+    lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    lines.push("COACH'S SUMMARY");
+    lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    lines.push(narrative||"No summary available.");
+    lines.push("");
+    lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    lines.push("DAILY BREAKDOWN");
+    lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    const dayNames=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    days.forEach((d,i)=>{
+      const label=dayNames[i]+" "+new Date(d.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"});
+      if(!d.logged){lines.push(label+": — not logged");return;}
+      lines.push(label+" ("+d.mealCount+" meals)");
+      lines.push("  Cal: "+fmtNum(d.calories)+" | P: "+fmtNum(d.protein)+"g | F: "+fmtNum(d.fat)+"g | NC: "+fmtNum(d.netCarbs)+"g");
+    });
+    lines.push("");
+    lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    lines.push("WEEKLY AVERAGES vs TARGETS (logged days only)");
+    lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    const rows=[
+      ["Calories",avg.calories,tgt.calories,"kcal"],
+      ["Protein",avg.protein,tgt.protein,"g"],
+      ["Fat",avg.fat,tgt.fat,"g"],
+      ["Net Carbs",avg.netCarbs,tgt.netCarbs,"g"],
+      ["Fiber",avg.fiber,tgt.fiber,"g"],
+      ["Sugar",avg.sugar,tgt.sugar,"g"],
+      ["Sodium",avg.sodium,tgt.sodium,"mg"],
+      ["Potassium",avg.potassium,tgt.potassium,"mg"],
+      ["Magnesium",avg.magnesium,tgt.magnesium,"mg"],
+      ["Calcium",avg.calcium,tgt.calcium,"mg"],
+      ["Vitamin D",avg.vitaminD,tgt.vitaminD,"mcg"],
+      ["Vitamin C",avg.vitaminC,tgt.vitaminC,"mg"],
+      ["Iron",avg.iron,tgt.iron,"mg"],
+    ];
+    rows.forEach(([name,val,target,unit])=>{
+      const p=Math.round((val/target)*100);
+      const status=p>=90?"✅":p>=60?"⚠️":"❌";
+      lines.push(status+" "+name+": "+fmtNum(val)+unit+" / "+fmtNum(target)+unit+" ("+pctStr(val,target)+")");
+    });
+    lines.push("");
+    lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    lines.push("Sent from NutriLog on "+new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"}));
+    return lines.join("\n");
+  }
+
+  async function sendWeeklyReport(){
+    setWeeklyLoading(true);setShowWeekly(true);setWeeklyData(null);
+    const wd=buildWeekData();
+    let narrative="";
+    try{
+      const avgStr=Object.entries(wd.avg).map(([k,v])=>k+":"+v).join(", ");
+      narrative=await callGemini(
+        `Weekly nutrition data (${wd.nLogged} days logged).\nDaily averages: ${avgStr}\nTargets: ${JSON.stringify(wd.targets)}\n\nWrite a 3-4 sentence brutally honest weekly nutrition coach summary. Cover: overall grade for the week, biggest wins, biggest gaps, and one specific priority for next week. Plain text only, no bullet points.`,
+        "You are a direct, no-nonsense nutrition coach writing a weekly email summary. Be specific, use numbers, skip pleasantries.",
+        apiKey
+      );
+    }catch(e){narrative="Could not generate AI summary ("+e.message+"). Raw data below.";}
+    const body=buildEmailBody(wd,narrative);
+    setWeeklyData({body,narrative,wd});
+    setWeeklyLoading(false);
+  }
+
+  function openMailto(body){
+    const wk=getWeekDates();
+    const weekLabel=new Date(wk[0]+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})+" – "+
+                    new Date(wk[6]+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+    const subject=encodeURIComponent("NutriLog Weekly Report — "+weekLabel);
+    const bodyEnc=encodeURIComponent(body);
+    window.location.href=`mailto:readygo.central@gmail.com?subject=${subject}&body=${bodyEnc}`;
+  }
+
+  function handleSetupSave(key){
+    LS.set("nl_apikey",key);
+    setApiKey(key);
+  }
+
+  if(!apiKey) return <SetupScreen onSave={handleSetupSave}/>;
+
+  const isToday=date===todayStr();
+  const suppTotals=SUPPLEMENTS.reduce((acc,s)=>{
+    if(!suppOn[s.id])return acc;
+    Object.keys(acc).forEach(k=>{acc[k]=(acc[k]||0)+(s[k]||0);});
+    return acc;
+  },{calories:0,protein:0,fat:0,netCarbs:0,fiber:0,sugar:0,sodium:0,potassium:0,magnesium:0,calcium:0,vitaminD:0,vitaminC:0,iron:0});
+
+  const totals={
+    calories:sum(meals,"calories")+suppTotals.calories,
+    ...Object.fromEntries([...MACROS,...MICROS].map(f=>[f.key,sum(meals,f.key)+suppTotals[f.key]]))
+  };
+  const calRem=targets.calories-totals.calories;
+  const over=calRem<0;
+
+  return(
+    <div style={{fontFamily:"DM Sans,sans-serif",background:BG,minHeight:"100vh",color:TEXT}}
+         className="safe-bottom">
+
+      {/* Header */}
+      <div style={{position:"sticky",top:0,zIndex:30,background:BG,
+        borderBottom:`1px solid ${BORDER}`,
+        paddingTop:"env(safe-area-inset-top)",
+        }}>
+        <div style={{padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+            <span style={{fontSize:18}}>🥑</span>
+            <span style={{fontFamily:"Outfit,sans-serif",fontWeight:700,fontSize:17,color:ACCENT}}>NutriLog</span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <button
+              onClick={()=>{const prev=addDays(date,-1);if(prev>=MIN_DATE)setDate(prev);}}
+              disabled={date===MIN_DATE}
+              style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:8,padding:"4px 13px",fontSize:18,
+                color:date===MIN_DATE?MUTED:TEXT,
+                opacity:date===MIN_DATE?0.4:1,
+                cursor:date===MIN_DATE?"default":"pointer"}}>‹</button>
+            <span style={{fontFamily:"Outfit,sans-serif",fontWeight:600,fontSize:13,color:TEXT,minWidth:80,textAlign:"center"}}>{fmtDate(date)}</span>
+            <button onClick={()=>!isToday&&setDate(addDays(date,1))} disabled={isToday}
+              style={{background:CARD,border:`1px solid ${BORDER}`,color:isToday?MUTED:TEXT,borderRadius:8,padding:"4px 13px",fontSize:18,opacity:isToday?.4:1}}>›</button>
+          </div>
+          <button onClick={()=>{setEditT({...targets});setShowTargets(true);}}
+            style={{background:"none",border:`1px solid ${BORDER}`,color:MUTED,borderRadius:8,padding:"5px 10px",fontSize:11,flexShrink:0}}>Targets</button>
+        </div>
+      </div>
+
+      <div style={{padding:"14px 16px",maxWidth:600,margin:"0 auto"}}>
+
+        {/* Calorie Hero */}
+        <div style={{background:"linear-gradient(135deg,#0F1629 0%,#1A1035 100%)",
+          border:`1px solid ${BORDER}`,borderRadius:20,padding:"24px 20px",
+          marginBottom:14,position:"relative",overflow:"hidden"}}>
+          <div style={{position:"absolute",top:-30,right:-30,width:130,height:130,
+            background:`${ACCENT}12`,borderRadius:"50%"}}/>
+          <div style={{textAlign:"center"}}>
+            <div style={{fontFamily:"Outfit,sans-serif",fontSize:11,color:MUTED,
+              letterSpacing:".1em",textTransform:"uppercase",marginBottom:4}}>Calories Consumed</div>
+            <div style={{fontFamily:"Outfit,sans-serif",fontSize:64,fontWeight:800,color:TEXT,lineHeight:1}}>
+              {Math.round(totals.calories).toLocaleString()}
+            </div>
+            <div style={{fontSize:13,color:MUTED,marginBottom:18}}>
+              of {targets.calories.toLocaleString()} target
+            </div>
+            <div style={{background:over?"#2D0A0A":"#071A07",
+              border:`1px solid ${over?"#EF444440":"#22C55E40"}`,
+              borderRadius:12,padding:"9px 28px",display:"inline-block"}}>
+              <span style={{fontFamily:"Outfit,sans-serif",fontWeight:700,fontSize:20,
+                color:over?"#EF4444":"#22C55E"}}>{over?"+":""}{Math.abs(Math.round(calRem)).toLocaleString()}</span>
+              <span style={{fontSize:12,color:MUTED,marginLeft:6}}>{over?"over":"remaining"}</span>
+            </div>
+          </div>
+          <div style={{marginTop:20}}>
+            <Bar value={totals.calories} max={targets.calories} color={over?"#EF4444":ACCENT} h={8}/>
+          </div>
+        </div>
+
+        {/* Macros */}
+        <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:20,padding:"18px 20px",marginBottom:14}}>
+          <div style={{fontFamily:"Outfit,sans-serif",fontWeight:600,fontSize:15,color:TEXT,marginBottom:14}}>Macronutrients</div>
+          <div style={{display:"flex",flexDirection:"column",gap:13}}>
+            {MACROS.map(m=>(
+              <div key={m.key}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                  <span style={{fontSize:13,color:TEXT}}>{m.label}</span>
+                  <span style={{fontFamily:"Outfit,sans-serif",fontSize:13,fontWeight:600,color:m.color}}>
+                    {Math.round(totals[m.key])}<span style={{color:MUTED,fontWeight:400}}>/{targets[m.key]}{m.unit}</span>
+                  </span>
+                </div>
+                <Bar value={totals[m.key]} max={targets[m.key]} color={m.color} h={6}/>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Vitamins & Minerals */}
+        <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:20,marginBottom:14,overflow:"hidden"}}>
+          <button onClick={()=>setVitOpen(v=>!v)}
+            style={{width:"100%",background:"none",border:"none",color:TEXT,
+              padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontFamily:"Outfit,sans-serif",fontWeight:600,fontSize:15}}>Vitamins & Minerals</span>
+            <span style={{color:MUTED,fontSize:13,display:"inline-block",
+              transform:vitOpen?"rotate(180deg)":"none",transition:"transform .2s"}}>▾</span>
+          </button>
+          {vitOpen&&(
+            <div style={{padding:"0 20px 20px",display:"flex",flexDirection:"column",gap:13}}>
+              {MICROS.map(m=>{
+                const v=totals[m.key],t=targets[m.key],p=t>0?(v/t)*100:0,col=microColor(p);
+                return(
+                  <div key={m.key}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                      <span style={{fontSize:13,color:TEXT}}>{m.label}</span>
+                      <span style={{fontFamily:"Outfit,sans-serif",fontSize:13,fontWeight:600,color:col}}>
+                        {Math.round(v)}<span style={{color:MUTED,fontWeight:400}}>/{t}{m.unit}</span>
+                      </span>
+                    </div>
+                    <Bar value={v} max={t} color={col} h={5}/>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Supplements */}
+        <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:20,padding:"18px 20px",marginBottom:14}}>
+          <div style={{fontFamily:"Outfit,sans-serif",fontWeight:600,fontSize:15,color:TEXT,marginBottom:12}}>Daily Supplements</div>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {SUPPLEMENTS.map(s=>{
+              const on=suppOn[s.id];
+              return(
+                <div key={s.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                  background:BG,borderRadius:12,padding:"10px 14px",
+                  border:`1px solid ${on?"#FF6B3530":BORDER}`,opacity:on?1:0.5,transition:"all .2s"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontSize:20}}>{s.icon}</span>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:600,color:TEXT}}>{s.name}</div>
+                      <div style={{fontSize:11,color:MUTED,marginTop:1}}>{s.note}</div>
+                      <div style={{fontSize:11,color:MUTED,marginTop:2}}>
+                        {s.calories}kcal · {s.protein}g protein
+                        {s.vitaminC>0?` · Vit C ${s.vitaminC}mg`:""}
+                        {s.vitaminD>0?` · Vit D ${s.vitaminD}mcg`:""}
+                        {s.iron>0?` · Iron ${s.iron}mg`:""}
+                      </div>
+                    </div>
+                  </div>
+                  <button onClick={()=>toggleSupp(s.id)}
+                    style={{flexShrink:0,width:44,height:26,borderRadius:999,border:"none",
+                      background:on?ACCENT:"#1A2340",position:"relative",transition:"background .2s"}}>
+                    <div style={{position:"absolute",top:3,left:on?20:3,width:20,height:20,
+                      borderRadius:"50%",background:"#fff",transition:"left .2s",
+                      boxShadow:"0 1px 4px rgba(0,0,0,.4)"}}/>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{fontSize:11,color:MUTED,marginTop:10,lineHeight:1.5}}>
+            ⚠️ Collagen is not a complete protein — counts toward totals but doesn't substitute for whole-food protein.
+          </div>
+        </div>
+
+        {/* Meal Log */}
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <span style={{fontFamily:"Outfit,sans-serif",fontWeight:600,fontSize:15,color:TEXT}}>
+              Meals ({meals.length})
+            </span>
+            {meals.length>0&&isToday&&(
+              <button onClick={endOfDay}
+                style={{background:`${ACCENT}18`,border:`1px solid ${ACCENT}50`,
+                  color:ACCENT,borderRadius:8,padding:"6px 14px",fontWeight:600,fontSize:13}}>
+                End of Day ✦
+              </button>
+            )}
+          </div>
+
+          {meals.length===0?(
+            <div style={{background:CARD,border:`1px dashed ${BORDER}`,borderRadius:16,
+              padding:"36px 20px",textAlign:"center"}}>
+              <div style={{fontSize:34,marginBottom:10}}>🍽️</div>
+              <div style={{color:MUTED,fontSize:14}}>
+                {isToday?"Tap + to log your first meal today.":"No meals logged on this day."}
+              </div>
+            </div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {meals.map(m=>{
+                const exp=expanded===m.id;
+                return(
+                  <div key={m.id} style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:16,overflow:"hidden"}}>
+                    <button onClick={()=>setExpanded(exp?null:m.id)}
+                      style={{width:"100%",background:"none",border:"none",padding:"14px 16px",textAlign:"left"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                        <div style={{flex:1,marginRight:10}}>
+                          <div style={{fontWeight:600,fontSize:14,color:TEXT,marginBottom:2,lineHeight:1.4}}>{m.description}</div>
+                          <div style={{fontSize:12,color:MUTED}}>{m.time}</div>
+                        </div>
+                        <div style={{textAlign:"right",flexShrink:0}}>
+                          <div style={{fontFamily:"Outfit,sans-serif",fontWeight:700,fontSize:16,color:ACCENT}}>{Math.round(m.calories)} kcal</div>
+                          <div style={{fontSize:11,color:MUTED}}>P:{Math.round(m.protein)}g·F:{Math.round(m.fat)}g·C:{Math.round(m.netCarbs)}g</div>
+                        </div>
+                      </div>
+                      {m.concerns?.length>0&&(
+                        <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:8}}>
+                          {m.concerns.map((c,i)=>(
+                            <span key={i} style={{background:"#2D0A0A",border:"1px solid #EF444440",
+                              color:"#F87171",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:500}}>{c}</span>
+                          ))}
+                        </div>
+                      )}
+                    </button>
+                    {exp&&(
+                      <div style={{borderTop:`1px solid ${BORDER}`,padding:"12px 16px 14px"}}>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+                          {[
+                            {l:"Fiber",v:m.fiber,u:"g"},{l:"Sugar",v:m.sugar,u:"g"},
+                            {l:"Sodium",v:m.sodium,u:"mg"},{l:"Potassium",v:m.potassium,u:"mg"},
+                            {l:"Magnesium",v:m.magnesium,u:"mg"},{l:"Calcium",v:m.calcium,u:"mg"},
+                            {l:"Vit D",v:m.vitaminD,u:"mcg"},{l:"Vit C",v:m.vitaminC,u:"mg"},
+                            {l:"Iron",v:m.iron,u:"mg"},
+                          ].map(n=>(
+                            <div key={n.l} style={{background:BG,borderRadius:8,padding:"8px 10px",textAlign:"center"}}>
+                              <div style={{fontSize:10,color:MUTED,marginBottom:2}}>{n.l}</div>
+                              <div style={{fontFamily:"Outfit,sans-serif",fontWeight:700,fontSize:14,color:TEXT}}>
+                                {Math.round(n.v||0)}<span style={{fontSize:9,color:MUTED}}>{n.u}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <button onClick={()=>deleteMeal(m.id)}
+                          style={{width:"100%",background:"#2D0A0A",border:"1px solid #EF444430",
+                            color:"#EF4444",borderRadius:8,padding:"10px",fontWeight:600,fontSize:13}}>
+                          Delete Meal
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Bottom actions */}
+        <div style={{display:"flex",gap:10,marginTop:24,justifyContent:"center",alignItems:"center"}}>
+          <button onClick={()=>setShowSettings(true)}
+            style={{background:"none",border:`1px solid ${BORDER}`,color:MUTED,
+              borderRadius:10,padding:"8px 14px",fontSize:12}}>
+            ⚙️ Settings
+          </button>
+          <button onClick={sendWeeklyReport}
+            style={{background:`#1A2340`,border:`1px solid #2A3A5A`,color:"#93C5FD",
+              borderRadius:10,padding:"8px 16px",fontSize:12,fontWeight:600}}>
+            📧 Weekly Report
+          </button>
+        </div>
+      </div>
+
+      {/* FAB */}
+      {isToday&&(
+        <button onClick={()=>{setShowAdd(true);setApiError("");}}
+          style={{position:"fixed",bottom:`calc(24px + env(safe-area-inset-bottom))`,
+            right:24,zIndex:20,width:60,height:60,borderRadius:"50%",background:ACCENT,
+            border:"none",color:"#fff",fontSize:32,fontWeight:300,
+            display:"flex",alignItems:"center",justifyContent:"center",
+            boxShadow:`0 4px 24px ${ACCENT}70`,lineHeight:1}}>+</button>
+      )}
+
+      {/* Add Meal Sheet */}
+      {showAdd&&(
+        <Sheet title="Log a Meal" onClose={()=>{setShowAdd(false);setInput("");setPreview(null);setApiError("");}}>
+          {!preview?(
+            <>
+              <p style={{fontSize:13,color:MUTED,marginBottom:10}}>
+                Describe what you ate — Claude will estimate the nutrition.
+              </p>
+              <textarea
+                value={input} onChange={e=>setInput(e.target.value)}
+                placeholder="e.g. two scrambled eggs and coffee with cream"
+                rows={3}
+                style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,borderRadius:12,
+                  padding:"12px 14px",color:TEXT,fontSize:15,resize:"none",marginBottom:14}}
+              />
+              {apiError&&(
+                <div style={{background:"#2D0A0A",border:"1px solid #EF444440",borderRadius:10,
+                  padding:"10px 14px",marginBottom:12,fontSize:12,color:"#F87171",lineHeight:1.5}}>
+                  ⚠️ API error: {apiError}<br/>
+                  <span style={{color:MUTED}}>Check your Gemini API key in ⚙️ Settings.</span>
+                </div>
+              )}
+              <button onClick={estimateMeal} disabled={loading||!input.trim()}
+                style={{width:"100%",background:loading?"#3A2010":ACCENT,border:"none",
+                  color:"#fff",borderRadius:12,padding:"15px",
+                  fontFamily:"Outfit,sans-serif",fontWeight:700,fontSize:16,
+                  opacity:(!input.trim()||loading)?.55:1}}>
+                {loading?"Estimating nutrition...":"Estimate Nutrition →"}
+              </button>
+            </>
+          ):(
+            <>
+              <div style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:14,padding:16,marginBottom:16}}>
+                <div style={{fontWeight:600,fontSize:14,color:TEXT,marginBottom:12,lineHeight:1.4}}>{input}</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:9,
+                  marginBottom:preview.concerns?.length>0?12:0}}>
+                  {[
+                    {l:"Calories",v:preview.calories,u:"kcal",big:true},
+                    {l:"Protein",v:preview.protein,u:"g"},
+                    {l:"Fat",v:preview.fat,u:"g"},
+                    {l:"Net Carbs",v:preview.netCarbs,u:"g"},
+                    {l:"Fiber",v:preview.fiber,u:"g"},
+                    {l:"Sugar",v:preview.sugar,u:"g"},
+                  ].map(n=>(
+                    <div key={n.l} style={{background:CARD,borderRadius:9,padding:"9px 10px",textAlign:"center"}}>
+                      <div style={{fontSize:10,color:MUTED,marginBottom:2}}>{n.l}</div>
+                      <div style={{fontFamily:"Outfit,sans-serif",fontWeight:700,fontSize:n.big?18:14,color:TEXT}}>
+                        {Math.round(n.v||0)}<span style={{fontSize:10,color:MUTED}}>{n.u}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {preview.concerns?.length>0&&(
+                  <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                    {preview.concerns.map((c,i)=>(
+                      <span key={i} style={{background:"#2D0A0A",border:"1px solid #EF444440",
+                        color:"#F87171",borderRadius:6,padding:"3px 9px",fontSize:11,fontWeight:500}}>{c}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div style={{display:"flex",gap:10}}>
+                <button onClick={()=>setPreview(null)}
+                  style={{flex:1,background:"none",border:`1px solid ${BORDER}`,
+                    color:MUTED,borderRadius:12,padding:13,fontWeight:600,fontSize:14}}>Edit</button>
+                <button onClick={confirmMeal}
+                  style={{flex:2,background:ACCENT,border:"none",color:"#fff",
+                    borderRadius:12,padding:13,fontFamily:"Outfit,sans-serif",fontWeight:700,fontSize:15}}>
+                  Confirm & Save
+                </button>
+              </div>
+            </>
+          )}
+        </Sheet>
+      )}
+
+      {/* Targets Sheet */}
+      {showTargets&&(
+        <Sheet title="Edit Daily Targets" onClose={()=>setShowTargets(false)}>
+          <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:20}}>
+            {TARGET_FIELDS.map(f=>(
+              <div key={f.key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+                <label style={{fontSize:14,color:TEXT,flex:1}}>
+                  {f.label} <span style={{color:MUTED,fontSize:12}}>({f.unit})</span>
+                </label>
+                <input type="number" value={editT[f.key]}
+                  onChange={e=>setEditT(t=>({...t,[f.key]:Number(e.target.value)}))}
+                  style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:8,
+                    padding:"8px 12px",color:TEXT,fontFamily:"Outfit,sans-serif",
+                    fontWeight:600,fontSize:15,width:100,textAlign:"right"}}
+                />
+              </div>
+            ))}
+          </div>
+          <button onClick={()=>{setTargets(editT);LS.set("nl_targets",editT);setShowTargets(false);}}
+            style={{width:"100%",background:ACCENT,border:"none",color:"#fff",
+              borderRadius:12,padding:14,fontFamily:"Outfit,sans-serif",fontWeight:700,fontSize:16}}>
+            Save Targets
+          </button>
+        </Sheet>
+      )}
+
+      {/* Settings Sheet */}
+      {showSettings&&(
+        <Sheet title="⚙️ Settings" onClose={()=>setShowSettings(false)}>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div>
+              <label style={{fontSize:13,color:MUTED,marginBottom:6,display:"block"}}>Google Gemini API Key</label>
+              <input type="password" defaultValue={apiKey}
+                onBlur={e=>{LS.set("nl_apikey",e.target.value);setApiKey(e.target.value);}}
+                style={{width:"100%",background:BG,border:`1px solid ${BORDER}`,
+                  borderRadius:10,padding:"12px 14px",color:TEXT,fontSize:14}}
+                placeholder="AIza..."
+              />
+              <div style={{fontSize:11,color:MUTED,marginTop:8,lineHeight:1.6}}>
+                Free key from <span style={{color:ACCENT}}>aistudio.google.com</span> → Get API key → Create API key
+              </div>
+            </div>
+            <div style={{background:"#071A0F",border:"1px solid #22C55E25",borderRadius:12,padding:"12px 14px"}}>
+              <div style={{fontSize:12,color:MUTED,lineHeight:1.6}}>
+                📦 <strong style={{color:TEXT}}>Data storage:</strong> All meals and settings are saved to this device's local storage. Clearing your browser/Safari data will erase them. Data does not sync across devices.
+              </div>
+            </div>
+          </div>
+        </Sheet>
+      )}
+
+      {/* End of Day Sheet */}
+      {showEOD&&(
+        <Sheet title="Day Summary" onClose={()=>{setShowEOD(false);setEodReport(null);}}>
+          {eodLoading?(
+            <div style={{textAlign:"center",padding:"50px 0"}}>
+              <div style={{fontSize:36,marginBottom:14}}>✦</div>
+              <div style={{color:MUTED,fontSize:14}}>Analyzing your day...</div>
+            </div>
+          ):eodReport&&(
+            <div style={{display:"flex",flexDirection:"column",gap:14,paddingBottom:12}}>
+              <div style={{textAlign:"center",padding:"18px 0 10px"}}>
+                <div style={{fontFamily:"Outfit,sans-serif",fontWeight:800,fontSize:88,
+                  color:gradeColor(eodReport.grade),lineHeight:1}}>{eodReport.grade}</div>
+                <div style={{fontSize:12,color:MUTED,marginTop:4}}>Overall Grade</div>
+              </div>
+              <div style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:12,padding:"14px 16px"}}>
+                <div style={{fontSize:15,color:TEXT,lineHeight:1.55}}>{eodReport.comment}</div>
+              </div>
+              {eodReport.deficiencies?.length>0&&(
+                <div>
+                  <div style={{fontFamily:"Outfit,sans-serif",fontWeight:600,fontSize:13,color:"#EF4444",marginBottom:8}}>↓ Deficiencies</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {eodReport.deficiencies.map((d,i)=>(
+                      <span key={i} style={{background:"#2D0A0A",border:"1px solid #EF444440",
+                        color:"#F87171",borderRadius:8,padding:"5px 12px",fontSize:13}}>{d}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {eodReport.overages?.length>0&&(
+                <div>
+                  <div style={{fontFamily:"Outfit,sans-serif",fontWeight:600,fontSize:13,color:"#F59E0B",marginBottom:8}}>↑ Overages</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {eodReport.overages.map((o,i)=>(
+                      <span key={i} style={{background:"#2D1500",border:"1px solid #F59E0B40",
+                        color:"#FCD34D",borderRadius:8,padding:"5px 12px",fontSize:13}}>{o}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {eodReport.suggestion&&(
+                <div style={{background:"#071A0F",border:"1px solid #22C55E35",borderRadius:12,padding:"14px 16px"}}>
+                  <div style={{fontFamily:"Outfit,sans-serif",fontWeight:600,fontSize:13,color:"#22C55E",marginBottom:6}}>💡 Tomorrow's Goal</div>
+                  <div style={{fontSize:14,color:TEXT,lineHeight:1.5}}>{eodReport.suggestion}</div>
+                </div>
+              )}
+            </div>
+          )}
+        </Sheet>
+      )}
+      {/* Weekly Report Sheet */}
+      {showWeekly&&(
+        <Sheet title="Weekly Report" onClose={()=>{setShowWeekly(false);setWeeklyData(null);}}>
+          {weeklyLoading?(
+            <div style={{textAlign:"center",padding:"50px 0"}}>
+              <div style={{fontSize:32,marginBottom:14}}>📊</div>
+              <div style={{color:MUTED,fontSize:14}}>Building your weekly report...</div>
+              <div style={{color:MUTED,fontSize:12,marginTop:6}}>Claude is analyzing your week</div>
+            </div>
+          ):weeklyData&&(
+            <div style={{display:"flex",flexDirection:"column",gap:14,paddingBottom:8}}>
+
+              {/* Coach summary */}
+              <div style={{background:BG,border:`1px solid ${BORDER}`,borderRadius:12,padding:"14px 16px"}}>
+                <div style={{fontFamily:"Outfit,sans-serif",fontWeight:600,fontSize:12,color:MUTED,marginBottom:8,textTransform:"uppercase",letterSpacing:".06em"}}>Coach's Summary</div>
+                <div style={{fontSize:14,color:TEXT,lineHeight:1.65}}>{weeklyData.narrative}</div>
+              </div>
+
+              {/* Daily overview */}
+              <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:12,padding:"14px 16px"}}>
+                <div style={{fontFamily:"Outfit,sans-serif",fontWeight:600,fontSize:12,color:MUTED,marginBottom:12,textTransform:"uppercase",letterSpacing:".06em"}}>Days This Week</div>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {weeklyData.wd.days.map((d,i)=>{
+                    const names=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+                    const lbl=names[i]+" "+new Date(d.date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"});
+                    const calPct=d.logged?pct(d.calories,targets.calories):0;
+                    const barColor=calPct>105?"#EF4444":calPct>85?ACCENT:"#6B7A99";
+                    return(
+                      <div key={d.date}>
+                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                          <span style={{fontSize:12,color:d.logged?TEXT:MUTED}}>{lbl}</span>
+                          <span style={{fontFamily:"Outfit,sans-serif",fontSize:12,fontWeight:600,color:d.logged?barColor:MUTED}}>
+                            {d.logged?fmtNum(d.calories)+" kcal":"not logged"}
+                          </span>
+                        </div>
+                        <Bar value={d.calories} max={targets.calories} color={barColor} h={4}/>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Weekly averages */}
+              <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:12,padding:"14px 16px"}}>
+                <div style={{fontFamily:"Outfit,sans-serif",fontWeight:600,fontSize:12,color:MUTED,marginBottom:12,textTransform:"uppercase",letterSpacing:".06em"}}>Avg vs Target ({weeklyData.wd.nLogged} days logged)</div>
+                <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                  {[
+                    {k:"calories",l:"Calories",u:"kcal",color:ACCENT},
+                    {k:"protein",l:"Protein",u:"g",color:"#60A5FA"},
+                    {k:"fat",l:"Fat",u:"g",color:"#FBBF24"},
+                    {k:"netCarbs",l:"Net Carbs",u:"g",color:"#A78BFA"},
+                    {k:"potassium",l:"Potassium",u:"mg",color:"#34D399"},
+                    {k:"magnesium",l:"Magnesium",u:"mg",color:"#34D399"},
+                    {k:"calcium",l:"Calcium",u:"mg",color:"#34D399"},
+                  ].map(({k,l,u,color})=>{
+                    const v=weeklyData.wd.avg[k],t=targets[k];
+                    const p=t>0?(v/t)*100:0;
+                    const c=p>=90?color:p>=60?"#F59E0B":"#EF4444";
+                    return(
+                      <div key={k}>
+                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                          <span style={{fontSize:12,color:TEXT}}>{l}</span>
+                          <span style={{fontFamily:"Outfit,sans-serif",fontSize:12,fontWeight:600,color:c}}>
+                            {fmtNum(v)}<span style={{color:MUTED,fontWeight:400}}>/{fmtNum(t)}{u}</span>
+                          </span>
+                        </div>
+                        <Bar value={v} max={t} color={c} h={4}/>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Send button */}
+              <button onClick={()=>openMailto(weeklyData.body)}
+                style={{width:"100%",background:"#1A2A50",border:"1px solid #2A4A80",
+                  color:"#93C5FD",borderRadius:14,padding:"15px",
+                  fontFamily:"Outfit,sans-serif",fontWeight:700,fontSize:16,
+                  display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                📧 Send to readygo.central@gmail.com
+              </button>
+              <div style={{fontSize:11,color:MUTED,textAlign:"center",lineHeight:1.5}}>
+                Tapping above opens your Mail app with the full report pre-loaded. Just hit Send.
+              </div>
+            </div>
+          )}
+        </Sheet>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
